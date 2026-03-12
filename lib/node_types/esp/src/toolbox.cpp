@@ -1,6 +1,7 @@
 // toolbox.cpp
 
 #include <Arduino.h>
+#include <stdarg.h>
 #include "toolbox.h"
 
 const PROGMEM char* str_on = "on";
@@ -228,12 +229,11 @@ void reboot() {
     delay(10);
     yield();
     delay(500); // let things settle a bit
-    ESP.restart(); // fails when serial activity TODO: solve or warn?
-    // #if ESP32
-    //     ESP.restart(); // fails when serial activity TODO: solve or warn?
-    // #else
-    //     ESP.reset(); // fails when serial activity TODO: solve or warn?
-    // #endif
+#ifdef IOTEMPOWER_WIFI_ESP
+    ESP.restart();
+#else
+    NVIC_SystemReset();
+#endif
 }
 
 void controlled_crash(const char * error_message) {

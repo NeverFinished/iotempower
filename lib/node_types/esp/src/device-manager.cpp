@@ -6,7 +6,12 @@
  */
 
 #include <Arduino.h>
-#include <espMqttClient.h>
+#include <iotempower-default.h>
+#ifdef IOTEMPOWER_WIFI_ESP
+    #include <espMqttClient.h>
+#else
+    #include <PubSubClient.h>
+#endif
 #include <toolbox.h>
 #include <device-manager.h>
 
@@ -269,9 +274,13 @@ bool DeviceManager::subscribe(IoTempowerMqttClient& mqtt_client, Ustring& node_t
                         topic.add(F("/"));
                         topic.add(sd.get_name());
                     }
+#ifdef IOTEMPOWER_WIFI_ESP
                     uint16_t packetIdSub = mqtt_client.subscribe(topic.as_cstr(), 0);
-                    ulog(F("Subscribing to %s with id %d."), 
-                        topic.as_cstr(), packetIdSub);
+                    ulog(F("Subscribing to %s with id %d."), topic.as_cstr(), packetIdSub);
+#else
+                    mqtt_client.subscribe(topic.as_cstr());
+                    ulog(F("Subscribing to %s."), topic.as_cstr());
+#endif
                 }
                 return true; // continue subdevice loop
             } ); // end foreach - iterate over subdevices

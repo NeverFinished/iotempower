@@ -206,15 +206,17 @@ bool Device::publish(IoTempowerMqttClient& mqtt_client, Ustring& node_topic, Ust
             // // DEBUG: check how long mqtt publish takes
             // unsigned long publish_start = micros();
  
-            // Publish with espMqttClient
             yield();
-            
+
+#ifdef IOTEMPOWER_WIFI_ESP
             uint16_t packet_id = mqtt_client.publish(topic.as_cstr(), 0, _retained, data_ptr, data_len);
- 
-            if(packet_id == 0) {
+            bool publish_ok = (packet_id != 0);
+#else
+            bool publish_ok = mqtt_client.publish(topic.as_cstr(), data_ptr, (unsigned int)data_len, _retained);
+#endif
+            if(!publish_ok) {
                 ulog(F("DEBUG: publish error!"));
                 log_buffer.add(F("!publish error!"));
-                // TODO: signal error and trigger reconnect - necessary?
                 return false;
             }
             
@@ -243,10 +245,15 @@ bool Device::publish_discovery_info(IoTempowerMqttClient& mqtt_client) {
         ulog(F("Publishing discovery info for %s."), name.as_cstr());
         // espMqttClient handles larger payloads automatically
         // API: uint16_t publish(const char* topic, uint8_t qos, bool retain, const uint8_t* payload, size_t length)
-        uint16_t packet_id = mqtt_client.publish(discovery_config_topic.c_str(), 0, true, 
-                                                  (const uint8_t*)discovery_info.c_str(), 
+#ifdef IOTEMPOWER_WIFI_ESP
+        uint16_t packet_id = mqtt_client.publish(discovery_config_topic.c_str(), 0, true,
+                                                  (const uint8_t*)discovery_info.c_str(),
                                                   discovery_info.length());
-        if(packet_id == 0) {
+        bool disc_ok = (packet_id != 0);
+#else
+        bool disc_ok = mqtt_client.publish(discovery_config_topic.c_str(), discovery_info.c_str(), true);
+#endif
+        if(!disc_ok) {
             ulog(F("!discovery publish error!"));
             return false;
         }

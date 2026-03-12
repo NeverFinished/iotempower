@@ -76,17 +76,23 @@
 #define _IOTEMPOWER_DEVICE_H_
 
 #include <functional>
-#include <espMqttClient.h>
 #include <iotempower-default.h>
+
+#ifdef IOTEMPOWER_WIFI_ESP
+    #include <espMqttClient.h>
+    #ifdef MQTT_USE_TLS
+        typedef espMqttClientSecure IoTempowerMqttClient;
+    #else
+        typedef espMqttClient IoTempowerMqttClient;
+    #endif
+#else
+    #include <PubSubClient.h>
+    typedef PubSubClient IoTempowerMqttClient;
+#endif
+
 #include <toolbox.h>
 
 #include "config-wrapper.h"
-
-#ifdef MQTT_USE_TLS
-typedef espMqttClientSecure IoTempowerMqttClient;
-#else
-typedef espMqttClient IoTempowerMqttClient;
-#endif
 
 class Device;
 

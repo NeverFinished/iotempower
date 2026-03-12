@@ -3,6 +3,11 @@
 #ifndef _IOTEMPOWER_DEFAULT_H_
 #define _IOTEMPOWER_DEFAULT_H_
 
+// Platform detection
+#if defined(ESP8266) || defined(ESP32)
+    #define IOTEMPOWER_WIFI_ESP
+#endif
+
 //#define IOTEMPOWER_RECONFIG_MAGIC "uiotpassreset"
 #define IOTEMPOWER_AP_RECONFIG_NAME "uiot-node"
 #define IOTEMPOWER_AP_RECONFIG_PASSWORD "iotempire"

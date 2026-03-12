@@ -91,9 +91,14 @@
  * See docs for more information on the IoTempower architecture.
  */
 
-// TODO: enable when PJON works 
+// TODO: enable when PJON works
 // // for randomness, we need crypto library first
 // #include <hydrogen.h>
+
+// Arduino.h must come first so platform macros (ESP8266, ESP32) are defined
+// before iotempower-default.h's IOTEMPOWER_WIFI_ESP detection runs.
+#include <Arduino.h>
+#include <iotempower-default.h>
 
 // TODO: check when this is actually not harmful
 #define BROWNOUT_DETECT_DISABLED
@@ -105,7 +110,9 @@
  */
 
 ////// Standard libraries
-#include <ArduinoOTA.h>  // Over-the-air firmware update support
+#ifdef IOTEMPOWER_WIFI_ESP
+    #include <ArduinoOTA.h>  // Over-the-air firmware update support (ESP only)
+#endif
 //#include <ESP8266WebServer.h> //Local WebServer used to serve the configuration portal - obsolete due to dongle
 
 
@@ -116,10 +123,7 @@
 
 #endif
 
-#ifdef ESP32
-    // // the flash string helper broke in 6.2 - see https://github.com/espressif/arduino-esp32/issues/8108
-    // #define FPSTR(pstr_pointer) (reinterpret_cast<const __FlashStringHelper *>(pstr_pointer))
-    // #define F(string_literal) (FPSTR(PSTR(string_literal)))
+#if defined(ESP32)
     #include <WiFi.h>
     #include <ESPmDNS.h>
 
@@ -127,26 +131,32 @@
         #include <WiFiClientSecure.h>
     #endif
 
-    #ifdef BROWNOUT_DETECT_DISABLED    
+    #ifdef BROWNOUT_DETECT_DISABLED
         #ifndef CONFIG_IDF_TARGET_ESP32C6
             #include "soc/soc.h"
             #include "soc/rtc_cntl_reg.h"
         #endif // CONFIG_IDF_TARGET_ESP32C6
     #endif // BROWNOUT_DETECT_DISABLED
-#else
+#elif defined(ESP8266)
     #include <ESP8266WiFi.h>
     #include <ESP8266mDNS.h>
 
     #ifdef MQTT_USE_TLS
-        const char mqtt_ca_cert_char[] PROGMEM = mqtt_ca_cert; 
+        const char mqtt_ca_cert_char[] PROGMEM = mqtt_ca_cert;
         BearSSL::X509List *serverTrustedCA = new BearSSL::X509List(mqtt_ca_cert_char);
     #endif
+#else // SAMD (MKR1010, etc.)
+    #include <WiFiNINA.h>
 #endif
 //#include <FS.h> // no filesystem used
 #include <WiFiUdp.h>
 
 // MQTT
-#include <espMqttClient.h>
+#ifdef IOTEMPOWER_WIFI_ESP
+    #include <espMqttClient.h>
+#else
+    #include <PubSubClient.h>
+#endif
 
 String mqtt_management_topic;
 
@@ -283,8 +293,9 @@ void id_blinker() {
         // randomness for 30 different blink patterns (5*6)
         long_blinks = urandom(1, 6);
         short_blinks = urandom(1, 7);
-        Serial.printf("Blink pattern: %d long_blinks, %d short_blinks\n",
-                      long_blinks, short_blinks);
+        Serial.print("Blink pattern: "); Serial.print(long_blinks);
+        Serial.print(" long_blinks, "); Serial.print(short_blinks);
+        Serial.println(" short_blinks");
         total = BLINK_OFF_START +
                 long_blinks * (BLINK_LONG + BLINK_OFF) +
                 BLINK_OFF_MID +
@@ -355,6 +366,7 @@ bool ota_display_present = false;
  * - Progress-aware with visual feedback
  * - Error-resilient with automatic retry capability
  */
+#ifdef IOTEMPOWER_WIFI_ESP
 void setup_ota() {
     ArduinoOTA.setPort(IOTEMPOWER_OTA_PORT);
 
@@ -428,12 +440,18 @@ void setup_ota() {
         ota_failed = true;
     });
 }
+#endif // IOTEMPOWER_WIFI_ESP
 
 uint32_t getChipId32() {
-    #ifdef ESP32
+    #if defined(ESP32)
         return ESP.getEfuseMac();
-    #else
+    #elif defined(ESP8266)
         return ESP.getChipId();
+    #else
+        // SAMD: derive a 32-bit ID from the last 4 bytes of the MAC address
+        byte mac[6];
+        WiFi.macAddress(mac);
+        return ((uint32_t)mac[2] << 24) | ((uint32_t)mac[3] << 16) | ((uint32_t)mac[4] << 8) | mac[5];
     #endif
 }
 
@@ -462,6 +480,12 @@ uint32_t getChipId32() {
  * making deployment much easier in production environments.
  */
 void reconfigMode() {
+#ifndef IOTEMPOWER_WIFI_ESP
+    // Adoption/reconfig mode (AP + OTA) is not supported on this platform
+    ulog(F("Reconfiguration mode not supported on this platform. Rebooting."));
+    reboot();
+    return;
+#else
     // Go to access-point and reconfiguration mode to allow a new
     // firmware to be uploaded
 
@@ -565,6 +589,7 @@ void reconfigMode() {
     // ESP.rtcUserMemoryWrite(0, (uint32_t *)rtcData, magicSize);
     reboot(); // Always reboot after this to free all eventually not freed
               // memory
+#endif // IOTEMPOWER_WIFI_ESP
 }
 
 static bool reconfig_mode_active=false;
@@ -622,8 +647,10 @@ void flash_mode_select() {
     }
 
     Serial.println(F("Continue to boot normally."));
+#ifdef IOTEMPOWER_WIFI_ESP
     // register password-hash for uploading
     ArduinoOTA.setPasswordHash(keyhash);
+#endif
 }
 
 /**
@@ -640,18 +667,23 @@ void flash_mode_select() {
 
 /// WiFi Network setup
 
-#ifdef MQTT_USE_TLS
-    #ifdef ESP32
-        espMqttClientSecure mqttClient(espMqttClientTypes::UseInternalTask::NO);
+#ifdef IOTEMPOWER_WIFI_ESP
+    #ifdef MQTT_USE_TLS
+        #ifdef ESP32
+            espMqttClientSecure mqttClient(espMqttClientTypes::UseInternalTask::NO);
+        #else
+            espMqttClientSecure mqttClient;
+        #endif
     #else
-        espMqttClientSecure mqttClient;
+        #ifdef ESP32
+            espMqttClient mqttClient(espMqttClientTypes::UseInternalTask::NO);
+        #else
+            espMqttClient mqttClient;
+        #endif
     #endif
-#else
-    #ifdef ESP32
-        espMqttClient mqttClient(espMqttClientTypes::UseInternalTask::NO);
-    #else
-        espMqttClient mqttClient;
-    #endif
+#else // SAMD
+    WiFiClient wifiClient;
+    PubSubClient mqttClient(wifiClient);
 #endif
 
 static char *my_hostname;
@@ -690,25 +722,35 @@ unsigned long mqtt_last_attempt = millis() - MQTT_RETRY_INTERVAL;
  * @param index Current index for chunked messages
  * @param total Total length for chunked messages
  */
-void onMqttMessage(const espMqttClientTypes::MessageProperties& properties, const char* topic, 
+#ifdef IOTEMPOWER_WIFI_ESP
+void onMqttMessage(const espMqttClientTypes::MessageProperties& properties, const char* topic,
                    const uint8_t* payload, size_t len, size_t index, size_t total) {
-    (void)properties;  // Unused for now
-    (void)index;       // Unused - we process complete messages
-    (void)total;       // Unused - we process complete messages
-    
+    (void)properties;
+    (void)index;
+    (void)total;
     Ustring log_buffer;
     log_buffer.printf(("Publish received.  topic: %s  len:  %u"), topic, len);
-
     Ustring utopic(topic);
     utopic.remove(0, node_topic.length() + 1);
     Ustring upayload((char *)payload, (unsigned int)len);
-
     log_buffer.add(F(" payload: >"));
     log_buffer.add(upayload);
     log_buffer.add(F("<"));
-
     device_manager.receive(utopic, upayload);
 }
+#else
+void onMqttMessage(char* topic, byte* payload, unsigned int len) {
+    Ustring log_buffer;
+    log_buffer.printf(("Publish received.  topic: %s  len:  %u"), topic, len);
+    Ustring utopic(topic);
+    utopic.remove(0, node_topic.length() + 1);
+    Ustring upayload((char *)payload, len);
+    log_buffer.add(F(" payload: >"));
+    log_buffer.add(upayload);
+    log_buffer.add(F("<"));
+    device_manager.receive(utopic, upayload);
+}
+#endif
 
 
 /**
@@ -730,8 +772,13 @@ void onMqttConnect() {
     ulog(F("Connected to MQTT."));
 
     // publish IP on mqtt
-    mqttClient.publish((mqtt_management_topic+String("ip")).c_str(), 0, true,
-        WiFi.localIP().toString().c_str());
+    String ip_topic = mqtt_management_topic + String("ip");
+    String ip_str = WiFi.localIP().toString();
+#ifdef IOTEMPOWER_WIFI_ESP
+    mqttClient.publish(ip_topic.c_str(), 0, true, ip_str.c_str());
+#else
+    mqttClient.publish(ip_topic.c_str(), ip_str.c_str(), true);
+#endif
     device_manager.publish_discovery_info(mqttClient);
     device_manager.subscribe(mqttClient, node_topic);
 }
@@ -749,38 +796,34 @@ void init_mqtt() {
     if (reconfig_mode_active)
         return;
     ulog(F("Initializing MQTT..."));
-    
-    // Set up MQTT client callbacks
+
+#ifdef IOTEMPOWER_WIFI_ESP
+    // Set up espMqttClient callbacks
     mqttClient.onConnect([](bool sessionPresent) {
         onMqttConnect();
     });
-    
+
     mqttClient.onDisconnect([](espMqttClientTypes::DisconnectReason reason) {
         mqtt_connected = false;
         ulog(F("MQTT: disconnected. Reason: %u"), static_cast<uint8_t>(reason));
     });
-    
+
     mqttClient.onMessage(onMqttMessage);
-    
-    // Set client ID
+
     mqttClient.setClientId(my_hostname);
-    
-    // Set credentials if provided
+
     #ifdef mqtt_user
         mqttClient.setCredentials(mqtt_user, mqtt_password);
     #endif
-    
-    // Set keep-alive and timeout
-    mqttClient.setKeepAlive(75);  // seconds
-    mqttClient.setTimeout(75);    // seconds
+
+    mqttClient.setKeepAlive(75);
+    mqttClient.setTimeout(75);
 
     #ifdef MQTT_USE_TLS
         #define mqtt_port 8883
-        // Configure TLS for espMqttClient
         #ifdef ESP32
             mqttClient.setCACert(mqtt_ca_cert);
         #else
-            // ESP8266 - use trust anchors
             mqttClient.setTrustAnchors(serverTrustedCA);
         #endif
     #else
@@ -788,15 +831,25 @@ void init_mqtt() {
     #endif
 
     #ifdef mqtt_server
-        // if defined, just set address
         mqttClient.setServer(mqtt_server, mqtt_port);
-        ulog(F("Setting mqtt server to: %s:%d"),  mqtt_server, mqtt_port);
+        ulog(F("Setting mqtt server to: %s:%d"), mqtt_server, mqtt_port);
     #else
-        // if not defined, take gateway address
         mqtt_server_buffer.from(WiFi.gatewayIP().toString().c_str());
         mqttClient.setServer(mqtt_server_buffer.as_cstr(), mqtt_port);
-        ulog(F("Setting mqtt server ip to: %s:%d"),  mqtt_server_buffer.as_cstr(), mqtt_port);
+        ulog(F("Setting mqtt server ip to: %s:%d"), mqtt_server_buffer.as_cstr(), mqtt_port);
     #endif
+#else // SAMD: PubSubClient
+    mqttClient.setCallback(onMqttMessage);
+
+    #ifdef mqtt_server
+        mqttClient.setServer(mqtt_server, 1883);
+        ulog(F("Setting mqtt server to: %s:1883"), mqtt_server);
+    #else
+        mqtt_server_buffer.from(WiFi.gatewayIP().toString().c_str());
+        mqttClient.setServer(mqtt_server_buffer.as_cstr(), 1883);
+        ulog(F("Setting mqtt server ip to: %s:1883"), mqtt_server_buffer.as_cstr());
+    #endif
+#endif
 }
 
 
@@ -819,9 +872,9 @@ void maintain_mqtt() {
         return;
     if(!wifi_connected)
         return;
-    
+
     mqttClient.loop();
-    
+
     if(!mqttClient.connected()) {
         if(mqtt_connected) {
             mqtt_connected = false;
@@ -830,18 +883,31 @@ void maintain_mqtt() {
         if(millis() - mqtt_last_attempt >= MQTT_RETRY_INTERVAL) {
             init_mqtt();
             ulog(F("Trying to connect to mqtt server as %s."), my_hostname);
+#ifdef IOTEMPOWER_WIFI_ESP
             if(mqttClient.connect()) {
-                // Connection initiated successfully
-                // onMqttConnect will be called via callback when actually connected
+                // Connection initiated; onMqttConnect called via callback
             } else {
                 ulog(F("MQTT connection initiation failed"));
             }
+#else // SAMD: PubSubClient - synchronous connect
+            bool conn;
+            #ifdef mqtt_user
+                conn = mqttClient.connect(my_hostname, mqtt_user, mqtt_password);
+            #else
+                conn = mqttClient.connect(my_hostname);
+            #endif
+            if(conn) {
+                mqtt_connected = true;
+                onMqttConnect();
+            } else {
+                ulog(F("MQTT connection failed"));
+            }
+#endif
             mqtt_last_attempt = millis();
         }
     } else {
         if(!mqtt_connected) {
             mqtt_connected = true;
-            // Connection is established, onMqttConnect callback has been called
         }
     }
 }
@@ -866,49 +932,52 @@ void maintain_mqtt() {
  * - Debugging and monitoring
  */
 void connectToWifi() {
-    // Start WiFi connection and register hostname
     ulog(F("Trying to connect to Wi-Fi with name " WIFI_SSID));
     if(reconfig_mode_active) {
-        my_hostname = (char *)"iotempower-adoptee"; // TODO: define in defaults
-        // my_hostname = (char *)"iotempower-xxxxxx";
-        // sprintf(my_hostname + strlen(my_hostname) - 6, "%06x", getChipId32());
+        my_hostname = (char *)"iotempower-adoptee";
     } else {
         my_hostname = (char *)HOSTNAME;
     }
-    #ifdef ESP32
-    WiFi.setHostname(my_hostname);
-    #else
-    WiFi.hostname(my_hostname);
-    #endif
-    ArduinoOTA.setHostname(my_hostname);
-    ulog(F("Registering hostname: %s"), my_hostname);
-    WiFi.mode(WIFI_STA);
 
-    // Before wifi-start?
+#if defined(ESP32)
+    WiFi.setHostname(my_hostname);
+#elif defined(ESP8266)
+    WiFi.hostname(my_hostname);
+#else
+    WiFi.setHostname(my_hostname);
+#endif
+    ulog(F("Registering hostname: %s"), my_hostname);
+
+#ifdef IOTEMPOWER_WIFI_ESP
+    ArduinoOTA.setHostname(my_hostname);
+    WiFi.mode(WIFI_STA);
     ulog(F("Starting MDNS."));
     MDNS.begin(my_hostname);
     ulog(F("MDNS Ready."));
-
-    // start ota
     ArduinoOTA.begin();
     ulog(F("OTA Ready."));
+#endif
 
     if(reconfig_mode_active) {
         ulog(F("Using default wifi credentials in adopt mode."));
-        WiFi.begin();
+#ifdef IOTEMPOWER_WIFI_ESP
+        WiFi.begin(); // ESP supports reconnect with stored credentials
+#else
+        WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+#endif
     } else {
         ulog(F("Setting wifi credentials."));
         WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     }
     ulog(F("Wifi begin called."));
 
-    if(WiFi.isConnected()) {
-        ulog(F("Already connected to Wi-Fi with IP: %s"), WiFi.localIP());
+    if(WiFi.status() == WL_CONNECTED) {
+        ulog(F("Already connected to Wi-Fi."));
         wifi_connected = true;
     }
-
 }
 
+#ifdef IOTEMPOWER_WIFI_ESP
 void configureTime() {
     ulog(F("Configuring time..."));
     configTime(0, 0, "pool.ntp.org", "time.nist.gov", "time.windows.com");
@@ -931,6 +1000,7 @@ void configureTime() {
     ulog(F("Current time: %s"), asctime(&timeinfo));
     ulog(F("Time synchronized after %u seconds."), seconds);
 }
+#endif // IOTEMPOWER_WIFI_ESP
 
 void onWifiDisconnect() {
     wifi_connected = false;
@@ -1031,12 +1101,10 @@ void setup() {
     // TODO: setup (another, the internal one seems quite ok) watchdog
     // TODO: consider not using serial at all and freeing it for other
     // connections, and offering other debug channels
-    #ifdef ESP32
-        #ifdef BROWNOUT_DETECT_DISABLED
-            #ifndef CONFIG_IDF_TARGET_ESP32C6
-                WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector TODO: verify that this reduces crashes
-            #endif // CONFIG_IDF_TARGET_ESP32C6
-        #endif // BROWNOUT_DETECT_DISABLED
+    #if defined(ESP32) && defined(BROWNOUT_DETECT_DISABLED)
+        #ifndef CONFIG_IDF_TARGET_ESP32C6
+            WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+        #endif
     #endif
 
     initialize_serial();
@@ -1052,17 +1120,17 @@ void setup() {
 
     flash_mode_select();
 
-    #ifdef ESP32
-    // TODO: anything equivalent for ESP32 necessary?
-    #else
-    WiFi.setSleepMode(WIFI_NONE_SLEEP); // TODO: check if this works -> for better rgb-strip-smoothness - should be obsolete when using neopixelbus
+    #ifdef ESP8266
+    WiFi.setSleepMode(WIFI_NONE_SLEEP);
     #endif
 
+#ifdef IOTEMPOWER_WIFI_ESP
     setup_ota();
+#endif
 
     connectToWifi();
 
-    #ifdef MQTT_USE_TLS 
+    #if defined(MQTT_USE_TLS) && defined(IOTEMPOWER_WIFI_ESP)
         // Needed for certificate expiry validation to work
         configureTime();
     #endif
@@ -1194,7 +1262,9 @@ void loop() {
             // //ulog(F("Packages left: %d"), pjon_bus.update());
             // pjon_bus.receive();
 
+#ifdef IOTEMPOWER_WIFI_ESP
             ArduinoOTA.handle(); // check for firmware update requests
+#endif
 
             do_later_check(); // work the scheduler
 
@@ -1246,7 +1316,9 @@ void loop() {
             device_manager.reset_buffers();
         }
     } else { // reconfig mode is active
+#ifdef IOTEMPOWER_WIFI_ESP
         ArduinoOTA.handle(); // check for firmware update requests
+#endif
 
         #ifdef ID_LED
         // flashing very rapidly
@@ -1274,10 +1346,16 @@ void loop() {
         double performance_average_calls_per_second = performance_iteration_count / 30.0; // Dividing by 30 seconds
 
         // Display the results including free memory
-        ulog("Performance: avg exec time %.2f us, %.2f calls/sec, free mem %ld bytes", 
-             performance_average_execution_time, 
+#ifdef IOTEMPOWER_WIFI_ESP
+        ulog("Performance: avg exec time %.2f us, %.2f calls/sec, free mem %ld bytes",
+             performance_average_execution_time,
              performance_average_calls_per_second,
              ESP.getFreeHeap());
+#else
+        ulog("Performance: avg exec time %.2f us, %.2f calls/sec",
+             performance_average_execution_time,
+             performance_average_calls_per_second);
+#endif
 
         // Reset for the next interval
         performance_last_reset_time = current_time;

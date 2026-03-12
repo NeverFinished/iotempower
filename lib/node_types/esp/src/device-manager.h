@@ -81,7 +81,12 @@
 #ifndef _IOTEMPOWER_DEVICE_MANAGER_H_
 #define _IOTEMPOWER_DEVICE_MANAGER_H_
 
-#include <espMqttClient.h>
+#include <iotempower-default.h>
+#ifdef IOTEMPOWER_WIFI_ESP
+    #include <espMqttClient.h>
+#else
+    #include <PubSubClient.h>
+#endif
 #include <toolbox.h>
 #include <device.h>
 

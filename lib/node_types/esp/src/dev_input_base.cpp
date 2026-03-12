@@ -1,4 +1,5 @@
 // dev_input_base.cpp
+#include <stdarg.h>
 #include "dev_input_base.h"
 
 void set_precision_interval(long interval_us, long unprecision_interval_us=-1);

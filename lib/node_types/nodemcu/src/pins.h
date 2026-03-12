@@ -1,8 +1,45 @@
 // Most are in pins_arduino.h
 // Pins on Wemos D1 Mini
+// Note: D0-D10 aliases and FLASHBUTTON/ONBOARDLED are ESP8266-specific
+#ifdef ESP8266
 
 //#define Pin(p) p
 
+// Fallback D-pin definitions for boards (like esp01_1m) that don't define them in pins_arduino.h
+// These are the standard Wemos D1 Mini / NodeMCU GPIO mappings
+#ifndef D0
+    #define D0 16
+#endif
+#ifndef D1
+    #define D1 5
+#endif
+#ifndef D2
+    #define D2 4
+#endif
+#ifndef D3
+    #define D3 0
+#endif
+#ifndef D4
+    #define D4 2
+#endif
+#ifndef D5
+    #define D5 14
+#endif
+#ifndef D6
+    #define D6 12
+#endif
+#ifndef D7
+    #define D7 13
+#endif
+#ifndef D8
+    #define D8 15
+#endif
+#ifndef D9
+    #define D9 3
+#endif
+#ifndef D10
+    #define D10 1
+#endif
 
 // Wemos D1 mini
 // //// left (antenna front and up, usb back down)
@@ -95,3 +132,5 @@
 // #define D9 9
 #define SD2 D9
 #define SDD2 D9
+
+#endif // ESP8266
